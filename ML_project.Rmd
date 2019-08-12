@@ -1,0 +1,103 @@
+---
+title: "Machine Learning Week 4 project"
+author: "Lawrence"
+date: "August 8, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Executive Summary:
+  The exercise of this project is to create a classification system in conjunction with user wearable sensors to determine if the user is lifting a barbell properly.  As such 6 participants were instructed to perform the movement correctly, and incorrectly in different ways. Using the random forests algorithm we will use the sensor data to detect when a user is doing it well.
+  
+We will categorize these correct and incorrect movements into 5 different classes:
+A: correct
+B: throwing elbows to the front
+C: lifting the dumbbell halfway
+D: lowering the dumbbell halfway
+E: throwing the hips to the front
+
+<H1><center><B>Data retrieval and preparation</B></center></H1>
+
+```{r}
+#download training data
+if (!file.exists("pml-training.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                destfile = "pml-training.csv", method = "curl")
+}
+training <- read.csv("pml-training.csv", sep = ",", na.strings=c("NA","#DIV/0!",""))
+
+#download testing data, if its not already there
+if (!file.exists("pml-testing.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                destfile = "pml-testing.csv", method = "curl")
+}
+testing <- read.csv("pml-testing.csv", sep = ",", na.strings=c("NA","#DIV/0!",""))
+
+set.seed(1)
+#use parallel processing as described by supplemental teaching
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#Start some basic training
+library(caret)
+
+```
+
+Now the data is loaded, but there are many columns that lack useful information. consequently we will winnow it down by removing columns that are all N/A as well as columns that have near zero variance. We will also remove the names and other user identifying characteristics to simplify the training.
+
+We have also enabled parallel processing to take advantage of any extra cores this cpu may have.
+
+```{r}
+train<-training[, 8:ncol(training)]
+test<-testing[,8:ncol(testing)]
+
+
+library(dplyr)
+not_all_na <- function(x) any(!is.na(x))
+not_any_na <- function(x) all(!is.na(x))
+train<-train[,colSums(is.na(train))==0]
+test<-test[,colSums(is.na(test))==0]
+
+
+#remove columns that have near zero variance
+nzv <- nearZeroVar(train,saveMetrics=TRUE)
+train <- train[,nzv$nzv==FALSE]
+```
+
+
+
+<H1><center><B>Using random forest algorithm to develop the predictor</B></center></H1>
+We will feed the entire training data set into the predictor and use a 5 fold model. Before runnning the algorithm on the test data set we will split the training set into a training section and verification section to determine the accuracy.
+
+```{r}
+#set the train control object to 5 folds for k-fold cross validation, and allow for
+#parallel processing
+#split the data into training and test sets for performance evaluation
+train_index <- createDataPartition(train$classe,p=0.70, list=F)
+train_train <- train[train_index,]
+train_validate <- train[-train_index,]
+
+#set the train control object to 5 folds for k-fold cross validation, and allow for
+#parallel processing
+fitControl <- trainControl(method = "cv",number = 5,allowParallel = TRUE)
+fit <- train(classe~., method="rf",data=train_train,trControl = fitControl)
+fit
+
+#run it on the validation set
+validate_predict <- predict(fit, newdata=train_validate)
+confusionMatrix(train_validate$classe, validate_predict)
+```
+<b>The accuracy is 99.41%, therefore the out of sample error is 0.59%</b>  The random forest algorithm is employed due to its ability to select the important variables, because there are many variables to choose from.  It is able to reduce the variance through its folding technique where the algorithm is run over different sections of the training set.  It helps to show how the algorithm will perform on an independent data set.
+<H1><center><B>Run the model on the test data set</B></center></H1>
+
+```{r}
+#try it on the testing set
+pred<-predict(fit,newdata=test)
+results <- predict(fit, test[, -length(names(test))])
+results
+```
